@@ -267,6 +267,157 @@ class JoystickReader:
         pygame.quit()
 
 
+class RangeSlider(ctk.CTkFrame):
+    """Custom range slider with two handles for min/max values."""
+    
+    def __init__(self, parent, from_=0, to=1, min_val=0, max_val=1,
+                 color="#4ECDC4", command=None, **kwargs):
+        super().__init__(parent, **kwargs)
+        
+        self.from_ = from_
+        self.to = to
+        self.min_val = min_val
+        self.max_val = max_val
+        self.color = color
+        self.command = command
+        self._dragging = None  # 'min', 'max', or 'range'
+        self._drag_start_x = 0
+        self._drag_start_min = 0
+        self._drag_start_max = 0
+        
+        self.configure(fg_color="transparent", height=24)
+        
+        self.canvas = ctk.CTkCanvas(self, height=24, bg="#252525", highlightthickness=0)
+        self.canvas.pack(fill="x", expand=True)
+        
+        self.canvas.bind("<Button-1>", self._on_click)
+        self.canvas.bind("<B1-Motion>", self._on_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_release)
+        self.canvas.bind("<Configure>", lambda e: self._redraw())
+    
+    def _value_to_x(self, value):
+        width = self.canvas.winfo_width()
+        if width <= 1:
+            return 0
+        ratio = (value - self.from_) / (self.to - self.from_)
+        return int(ratio * (width - 20)) + 10
+    
+    def _x_to_value(self, x):
+        width = self.canvas.winfo_width()
+        if width <= 20:
+            return self.from_
+        ratio = (x - 10) / (width - 20)
+        ratio = max(0, min(1, ratio))
+        return self.from_ + ratio * (self.to - self.from_)
+    
+    def _redraw(self):
+        self.canvas.delete("all")
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        
+        if width <= 1:
+            return
+        
+        # Track background
+        self.canvas.create_rectangle(10, height//2-3, width-10, height//2+3,
+                                    fill="#444444", outline="")
+        
+        # Active range
+        x1 = self._value_to_x(self.min_val)
+        x2 = self._value_to_x(self.max_val)
+        self.canvas.create_rectangle(x1, height//2-3, x2, height//2+3,
+                                    fill=self.color, outline="")
+        
+        # Min handle
+        self.canvas.create_oval(x1-6, height//2-6, x1+6, height//2+6,
+                               fill=self.color, outline="#ffffff", width=2, tags="min_handle")
+        
+        # Max handle
+        self.canvas.create_oval(x2-6, height//2-6, x2+6, height//2+6,
+                               fill=self.color, outline="#ffffff", width=2, tags="max_handle")
+    
+    def _on_click(self, event):
+        x = event.x
+        x_min = self._value_to_x(self.min_val)
+        x_max = self._value_to_x(self.max_val)
+        
+        # Check which handle is closer
+        dist_min = abs(x - x_min)
+        dist_max = abs(x - x_max)
+        
+        if dist_min <= 10 and dist_min <= dist_max:
+            self._dragging = 'min'
+        elif dist_max <= 10:
+            self._dragging = 'max'
+        elif x_min < x < x_max:
+            self._dragging = 'range'
+            self._drag_start_x = x
+            self._drag_start_min = self.min_val
+            self._drag_start_max = self.max_val
+        else:
+            # Click outside - move nearest handle
+            if dist_min < dist_max:
+                self._dragging = 'min'
+                self._update_value(event)
+            else:
+                self._dragging = 'max'
+                self._update_value(event)
+    
+    def _on_drag(self, event):
+        if self._dragging:
+            self._update_value(event)
+    
+    def _on_release(self, event):
+        self._dragging = None
+    
+    def _update_value(self, event):
+        if self._dragging == 'min':
+            new_val = self._x_to_value(event.x)
+            new_val = max(self.from_, min(self.to, new_val))
+            # Push max if min exceeds it
+            if new_val > self.max_val:
+                self.max_val = new_val
+            self.min_val = new_val
+        elif self._dragging == 'max':
+            new_val = self._x_to_value(event.x)
+            new_val = max(self.from_, min(self.to, new_val))
+            # Push min if max goes below it
+            if new_val < self.min_val:
+                self.min_val = new_val
+            self.max_val = new_val
+        elif self._dragging == 'range':
+            dx = event.x - self._drag_start_x
+            width = self.canvas.winfo_width() - 20
+            if width > 0:
+                dv = dx / width * (self.to - self.from_)
+                range_size = self._drag_start_max - self._drag_start_min
+                
+                new_min = self._drag_start_min + dv
+                new_max = self._drag_start_max + dv
+                
+                if new_min < self.from_:
+                    new_min = self.from_
+                    new_max = self.from_ + range_size
+                if new_max > self.to:
+                    new_max = self.to
+                    new_min = self.to - range_size
+                
+                self.min_val = new_min
+                self.max_val = new_max
+        
+        self._redraw()
+        if self.command:
+            self.command(self.min_val, self.max_val)
+    
+    def set(self, min_val, max_val):
+        self.min_val = min_val
+        self.max_val = max_val
+        self._redraw()
+    
+    def get(self):
+        return (self.min_val, self.max_val)
+
+
 class HandlerWidget(ctk.CTkFrame):
     """Widget for configuring a single alert handler."""
     
@@ -319,45 +470,33 @@ class HandlerWidget(ctk.CTkFrame):
         self.controls_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.controls_frame.pack(fill="x", padx=10, pady=(0, 8))
         
-        # Row 1: Thresholds
+        # Row 1: Threshold range
         row1 = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
         row1.pack(fill="x", pady=2)
         
-        # Min threshold
-        ctk.CTkLabel(row1, text="Мин:", font=ctk.CTkFont(size=13),
-                    text_color="#888888", width=36).pack(side="left")
+        ctk.CTkLabel(row1, text="Диапазон:", font=ctk.CTkFont(size=13),
+                    text_color="#888888", width=65).pack(side="left")
         
-        self.min_slider = ctk.CTkSlider(
-            row1, from_=0, to=1, number_of_steps=100,
-            command=self._on_min_slider_change,
-            progress_color=self.color, button_color=self.color, width=140
-        )
-        self.min_slider.set(self.handler.min_threshold)
-        self.min_slider.pack(side="left", padx=(2, 0))
-        
-        self.min_entry = ctk.CTkEntry(row1, width=50, height=26, font=ctk.CTkFont(size=13),
+        self.min_entry = ctk.CTkEntry(row1, width=45, height=26, font=ctk.CTkFont(size=13),
                                       justify="center", fg_color="#333333", border_width=1)
         self.min_entry.insert(0, f"{int(self.handler.min_threshold*100)}")
-        self.min_entry.pack(side="left", padx=(4, 0))
+        self.min_entry.pack(side="left", padx=(2, 0))
         self.min_entry.bind("<Return>", self._on_min_entry)
         self.min_entry.bind("<FocusOut>", self._on_min_entry)
         
-        # Max threshold
-        ctk.CTkLabel(row1, text="Макс:", font=ctk.CTkFont(size=13),
-                    text_color="#888888", width=42).pack(side="left", padx=(12, 0))
-        
-        self.max_slider = ctk.CTkSlider(
-            row1, from_=0, to=1, number_of_steps=100,
-            command=self._on_max_slider_change,
-            progress_color=self.color, button_color=self.color, width=140
+        self.range_slider = RangeSlider(
+            row1, from_=0, to=1,
+            min_val=self.handler.min_threshold,
+            max_val=self.handler.max_threshold,
+            color=self.color,
+            command=self._on_range_change
         )
-        self.max_slider.set(self.handler.max_threshold)
-        self.max_slider.pack(side="left", padx=(2, 0))
+        self.range_slider.pack(side="left", fill="x", expand=True, padx=(4, 4))
         
-        self.max_entry = ctk.CTkEntry(row1, width=50, height=26, font=ctk.CTkFont(size=13),
+        self.max_entry = ctk.CTkEntry(row1, width=45, height=26, font=ctk.CTkFont(size=13),
                                       justify="center", fg_color="#333333", border_width=1)
         self.max_entry.insert(0, f"{int(self.handler.max_threshold*100)}")
-        self.max_entry.pack(side="left", padx=(4, 0))
+        self.max_entry.pack(side="left", padx=(0, 2))
         self.max_entry.bind("<Return>", self._on_max_entry)
         self.max_entry.bind("<FocusOut>", self._on_max_entry)
         
@@ -426,50 +565,36 @@ class HandlerWidget(ctk.CTkFrame):
         entry.delete(0, "end")
         entry.insert(0, value)
     
-    def _on_min_slider_change(self, value):
-        self.handler.min_threshold = value
-        self._update_entry(self.min_entry, f"{int(value*100)}")
-        if value > self.handler.max_threshold:
-            self.handler.max_threshold = value
-            self.max_slider.set(value)
-            self._update_entry(self.max_entry, f"{int(value*100)}")
+    def _on_range_change(self, min_val, max_val):
+        """Handle range slider change."""
+        self.handler.min_threshold = min_val
+        self.handler.max_threshold = max_val
+        self._update_entry(self.min_entry, f"{int(min_val*100)}")
+        self._update_entry(self.max_entry, f"{int(max_val*100)}")
         self.on_update()
     
     def _on_min_entry(self, event=None):
         try:
             value = int(self.min_entry.get())
             value = max(0, min(100, value)) / 100.0
-            self.handler.min_threshold = value
-            self.min_slider.set(value)
-            self._update_entry(self.min_entry, f"{int(value*100)}")
             if value > self.handler.max_threshold:
-                self.handler.max_threshold = value
-                self.max_slider.set(value)
-                self._update_entry(self.max_entry, f"{int(value*100)}")
+                value = self.handler.max_threshold
+            self.handler.min_threshold = value
+            self._update_entry(self.min_entry, f"{int(value*100)}")
+            self.range_slider.set(self.handler.min_threshold, self.handler.max_threshold)
             self.on_update()
         except ValueError:
             self._update_entry(self.min_entry, f"{int(self.handler.min_threshold*100)}")
-    
-    def _on_max_slider_change(self, value):
-        self.handler.max_threshold = value
-        self._update_entry(self.max_entry, f"{int(value*100)}")
-        if value < self.handler.min_threshold:
-            self.handler.min_threshold = value
-            self.min_slider.set(value)
-            self._update_entry(self.min_entry, f"{int(value*100)}")
-        self.on_update()
     
     def _on_max_entry(self, event=None):
         try:
             value = int(self.max_entry.get())
             value = max(0, min(100, value)) / 100.0
-            self.handler.max_threshold = value
-            self.max_slider.set(value)
-            self._update_entry(self.max_entry, f"{int(value*100)}")
             if value < self.handler.min_threshold:
-                self.handler.min_threshold = value
-                self.min_slider.set(value)
-                self._update_entry(self.min_entry, f"{int(value*100)}")
+                value = self.handler.min_threshold
+            self.handler.max_threshold = value
+            self._update_entry(self.max_entry, f"{int(value*100)}")
+            self.range_slider.set(self.handler.min_threshold, self.handler.max_threshold)
             self.on_update()
         except ValueError:
             self._update_entry(self.max_entry, f"{int(self.handler.max_threshold*100)}")
@@ -864,7 +989,8 @@ class PedalAssistantApp(ctk.CTk):
             height=38,
             command=self._refresh_devices,
             font=ctk.CTkFont(size=18),
-            text_color="#333333"
+            fg_color="#555555",
+            hover_color="#666666"
         )
         self.refresh_btn.pack(side="right", padx=(10, 0))
         
@@ -875,9 +1001,8 @@ class PedalAssistantApp(ctk.CTk):
             height=38,
             command=self._save_settings,
             font=ctk.CTkFont(size=18),
-            fg_color="#4ECDC4",
-            hover_color="#3DBDB4",
-            text_color="#1a1a1a"
+            fg_color="#555555",
+            hover_color="#666666"
         )
         self.save_btn.pack(side="right", padx=(10, 0))
         
