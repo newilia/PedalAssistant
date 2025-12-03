@@ -12,10 +12,16 @@ import time
 import uuid
 import json
 import os
+import sys
+import winreg
 from typing import Dict, Optional, List, Callable
 from dataclasses import dataclass, field, asdict
 import pystray
 from PIL import Image, ImageDraw
+
+# Autostart registry key
+AUTOSTART_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_APP_NAME = "PedalAssistant"
 
 # Settings file path
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
@@ -854,7 +860,7 @@ class AxisWidget(ctk.CTkFrame):
 class PedalAssistantApp(ctk.CTk):
     """Main application window."""
     
-    def __init__(self):
+    def __init__(self, start_minimized: bool = False):
         super().__init__()
         
         self.title("PedalAssistant - Монитор осей игровых устройств")
@@ -879,6 +885,10 @@ class PedalAssistantApp(ctk.CTk):
         # Handle window close and minimize
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Unmap>", self._on_minimize)
+        
+        # Start minimized if requested (autostart mode)
+        if start_minimized:
+            self.withdraw()
     
     def _create_tray_icon(self):
         """Create system tray icon."""
@@ -1004,7 +1014,20 @@ class PedalAssistantApp(ctk.CTk):
             fg_color="#555555",
             hover_color="#666666"
         )
+        
+        # Autostart checkbox
+        self.autostart_var = ctk.BooleanVar(value=self._get_autostart())
+        self.autostart_checkbox = ctk.CTkCheckBox(
+            self.device_select_frame,
+            text="Автозапуск",
+            variable=self.autostart_var,
+            command=self._on_autostart_toggle,
+            font=ctk.CTkFont(size=14),
+            checkbox_width=20,
+            checkbox_height=20
+        )
         self.save_btn.pack(side="right", padx=(10, 0))
+        self.autostart_checkbox.pack(side="right", padx=(10, 0))
         
         # Axes container (scrollable)
         self.axes_frame = ctk.CTkFrame(self.main_frame, fg_color="#1a1a1a", corner_radius=12)
@@ -1198,6 +1221,46 @@ class PedalAssistantApp(ctk.CTk):
                 # Rebuild widgets
                 widget._rebuild_handler_widgets()
     
+    def _get_autostart(self) -> bool:
+        """Check if autostart is enabled in Windows registry."""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG_KEY, 0, winreg.KEY_READ)
+            try:
+                winreg.QueryValueEx(key, AUTOSTART_APP_NAME)
+                return True
+            except FileNotFoundError:
+                return False
+            finally:
+                winreg.CloseKey(key)
+        except Exception:
+            return False
+    
+    def _set_autostart(self, enabled: bool):
+        """Enable or disable autostart in Windows registry."""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG_KEY, 0, winreg.KEY_SET_VALUE)
+            try:
+                if enabled:
+                    # Get path to pythonw and script for minimized autostart
+                    app_dir = os.path.dirname(os.path.abspath(__file__))
+                    script_path = os.path.join(app_dir, "pedal_assistant.py")
+                    pythonw_path = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+                    winreg.SetValueEx(key, AUTOSTART_APP_NAME, 0, winreg.REG_SZ, 
+                                     f'"{pythonw_path}" "{script_path}" --minimized')
+                else:
+                    try:
+                        winreg.DeleteValue(key, AUTOSTART_APP_NAME)
+                    except FileNotFoundError:
+                        pass
+            finally:
+                winreg.CloseKey(key)
+        except Exception as e:
+            print(f"Error setting autostart: {e}")
+    
+    def _on_autostart_toggle(self):
+        """Handle autostart checkbox toggle."""
+        self._set_autostart(self.autostart_var.get())
+    
     def _on_close(self):
         self.running = False
         if self.tray_icon and self.tray_icon.visible:
@@ -1210,7 +1273,8 @@ class PedalAssistantApp(ctk.CTk):
 
 
 def main():
-    app = PedalAssistantApp()
+    start_minimized = "--minimized" in sys.argv
+    app = PedalAssistantApp(start_minimized=start_minimized)
     app.mainloop()
 
 
