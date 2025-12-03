@@ -10,10 +10,15 @@ import sounddevice as sd
 import threading
 import time
 import uuid
+import json
+import os
 from typing import Dict, Optional, List, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 import pystray
 from PIL import Image, ImageDraw
+
+# Settings file path
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
 # Configure appearance
 ctk.set_appearance_mode("dark")
@@ -736,7 +741,6 @@ class PedalAssistantApp(ctk.CTk):
         
         self.axis_widgets: List[AxisWidget] = []
         self.running = True
-        self._last_triggered_count = -1  # For optimization
         
         # System tray (always visible)
         self.tray_icon: Optional[pystray.Icon] = None
@@ -744,7 +748,7 @@ class PedalAssistantApp(ctk.CTk):
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
         
         self._create_ui()
-        self._refresh_devices()
+        self._refresh_devices(apply_saved_settings=True)  # Load settings on startup
         self._update_loop()
         
         # Handle window close and minimize
@@ -859,41 +863,23 @@ class PedalAssistantApp(ctk.CTk):
             width=40,
             height=38,
             command=self._refresh_devices,
-            font=ctk.CTkFont(size=18)
+            font=ctk.CTkFont(size=18),
+            text_color="#333333"
         )
         self.refresh_btn.pack(side="right", padx=(10, 0))
         
-        # Status bar
-        self.status_frame = ctk.CTkFrame(self.main_frame, fg_color="#1a1a1a", corner_radius=12, height=55)
-        self.status_frame.pack(fill="x", pady=(0, 15))
-        self.status_frame.pack_propagate(False)
-        
-        self.status_inner = ctk.CTkFrame(self.status_frame, fg_color="transparent")
-        self.status_inner.pack(fill="both", expand=True, padx=15)
-        
-        self.status_indicator = ctk.CTkLabel(
-            self.status_inner,
-            text="●",
-            font=ctk.CTkFont(size=22),
-            text_color="#4ECDC4"
+        self.save_btn = ctk.CTkButton(
+            self.device_select_frame,
+            text="💾",
+            width=40,
+            height=38,
+            command=self._save_settings,
+            font=ctk.CTkFont(size=18),
+            fg_color="#4ECDC4",
+            hover_color="#3DBDB4",
+            text_color="#1a1a1a"
         )
-        self.status_indicator.pack(side="left")
-        
-        self.status_label = ctk.CTkLabel(
-            self.status_inner,
-            text="Готово",
-            font=ctk.CTkFont(size=15),
-            text_color="#888888"
-        )
-        self.status_label.pack(side="left", padx=(10, 0))
-        
-        self.triggered_label = ctk.CTkLabel(
-            self.status_inner,
-            text="",
-            font=ctk.CTkFont(size=14),
-            text_color="#FF6B6B"
-        )
-        self.triggered_label.pack(side="right")
+        self.save_btn.pack(side="right", padx=(10, 0))
         
         # Axes container (scrollable)
         self.axes_frame = ctk.CTkFrame(self.main_frame, fg_color="#1a1a1a", corner_radius=12)
@@ -920,8 +906,9 @@ class PedalAssistantApp(ctk.CTk):
         )
         self.no_device_label.pack(pady=50)
     
-    def _refresh_devices(self):
+    def _refresh_devices(self, apply_saved_settings: bool = False):
         devices = self.joystick_reader.get_devices()
+        settings = self._load_settings() if apply_saved_settings else None
         
         if not devices:
             self.device_dropdown.configure(values=["Нет подключенных устройств"])
@@ -929,10 +916,18 @@ class PedalAssistantApp(ctk.CTk):
             self._clear_axes()
         else:
             self.device_dropdown.configure(values=devices)
-            self.device_dropdown.set(devices[0])
-            self._on_device_select(devices[0])
+            
+            # Try to select saved device
+            selected_device = devices[0]
+            if settings and "device" in settings:
+                saved_device = settings["device"]
+                if saved_device in devices:
+                    selected_device = saved_device
+            
+            self.device_dropdown.set(selected_device)
+            self._on_device_select(selected_device, settings)
     
-    def _on_device_select(self, selection: str):
+    def _on_device_select(self, selection: str, settings: dict = None):
         if selection.startswith("Нет"):
             self._clear_axes()
             return
@@ -942,6 +937,9 @@ class PedalAssistantApp(ctk.CTk):
             num_axes = self.joystick_reader.select_device(device_idx)
             if num_axes > 0:
                 self._create_axis_widgets(num_axes)
+                # Apply saved settings if provided
+                if settings:
+                    self._apply_settings(settings)
             else:
                 self._clear_axes()
         except ValueError as e:
@@ -998,27 +996,82 @@ class PedalAssistantApp(ctk.CTk):
         
         axis_values = self.joystick_reader.get_axis_values()
         
-        total_triggered = 0
-        
         if axis_values and self.axis_widgets:
             for i, widget in enumerate(self.axis_widgets):
                 if i < len(axis_values):
                     widget.update_value(axis_values[i])
-                    total_triggered += widget.get_triggered_count()
-        
-        # Update status only if changed
-        if total_triggered != self._last_triggered_count:
-            self._last_triggered_count = total_triggered
-            if total_triggered > 0:
-                self.status_indicator.configure(text_color="#FF6B6B")
-                self.status_label.configure(text="Сработало обработчиков:")
-                self.triggered_label.configure(text=str(total_triggered))
-            else:
-                self.status_indicator.configure(text_color="#4ECDC4")
-                self.status_label.configure(text="Готово")
-                self.triggered_label.configure(text="")
         
         self.after(33, self._update_loop)  # 30 FPS
+    
+    def _save_settings(self):
+        """Save current settings to file."""
+        settings = {
+            "device": self.device_dropdown.get(),
+            "axes": {}
+        }
+        
+        for widget in self.axis_widgets:
+            axis_handlers = []
+            for handler in widget.handlers:
+                axis_handlers.append({
+                    "min_threshold": handler.min_threshold,
+                    "max_threshold": handler.max_threshold,
+                    "frequency": handler.frequency,
+                    "volume": handler.volume,
+                    "waveform": handler.waveform
+                })
+            settings["axes"][str(widget.axis_index)] = axis_handlers
+        
+        try:
+            with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2, ensure_ascii=False)
+            
+            # Brief visual feedback on save button
+            self.save_btn.configure(text="✓")
+            self.after(1000, lambda: self.save_btn.configure(text="💾"))
+        except Exception as e:
+            print(f"Error saving settings: {e}")
+    
+    def _load_settings(self):
+        """Load settings from file."""
+        if not os.path.exists(SETTINGS_FILE):
+            return None
+        
+        try:
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+            return None
+    
+    def _apply_settings(self, settings: dict):
+        """Apply loaded settings to axes."""
+        if not settings or "axes" not in settings:
+            return
+        
+        for widget in self.axis_widgets:
+            axis_key = str(widget.axis_index)
+            if axis_key in settings["axes"]:
+                handlers_data = settings["axes"][axis_key]
+                
+                # Clear existing handlers
+                for handler in widget.handlers:
+                    widget.audio_mixer.stop_handler(handler.id)
+                widget.handlers.clear()
+                
+                # Create handlers from settings
+                for handler_data in handlers_data:
+                    handler = AlertHandler(
+                        min_threshold=handler_data.get("min_threshold", 1.0),
+                        max_threshold=handler_data.get("max_threshold", 1.0),
+                        frequency=handler_data.get("frequency", 440),
+                        volume=handler_data.get("volume", 0.5),
+                        waveform=handler_data.get("waveform", "sine")
+                    )
+                    widget.handlers.append(handler)
+                
+                # Rebuild widgets
+                widget._rebuild_handler_widgets()
     
     def _on_close(self):
         self.running = False
