@@ -22,7 +22,7 @@ if errorlevel 1 (
 :: Проверка и установка зависимостей
 echo [*] Проверка зависимостей...
 
-python -c "import pygame, customtkinter, numpy, sounddevice" >nul 2>&1
+python -c "import pygame, customtkinter, numpy, sounddevice, pystray, PIL" >nul 2>&1
 if errorlevel 1 (
     echo [*] Установка необходимых пакетов...
     echo.

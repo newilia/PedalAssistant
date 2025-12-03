@@ -12,6 +12,8 @@ import time
 import uuid
 from typing import Dict, Optional, List, Callable
 from dataclasses import dataclass, field
+import pystray
+from PIL import Image, ImageDraw
 
 # Configure appearance
 ctk.set_appearance_mode("dark")
@@ -627,24 +629,30 @@ class AxisWidget(ctk.CTkFrame):
     
     def update_value(self, value: float):
         """Update axis value and check handlers."""
-        self.value = max(0.0, min(1.0, value))
+        new_value = max(0.0, min(1.0, value))
+        value_changed = abs(new_value - self.value) > 0.001
+        self.value = new_value
         
         for i, handler in enumerate(self.handlers):
             was_triggered = handler.is_triggered
             is_triggered = handler.check_trigger(self.value)
-            handler.is_triggered = is_triggered
             
-            # Update audio
-            if is_triggered and not was_triggered:
-                self.audio_mixer.start_handler(handler)
-            elif not is_triggered and was_triggered:
-                self.audio_mixer.stop_handler(handler.id)
-            
-            # Update widget visual
-            if i < len(self.handler_widgets):
-                self.handler_widgets[i].set_triggered(is_triggered)
+            if is_triggered != was_triggered:
+                handler.is_triggered = is_triggered
+                
+                # Update audio
+                if is_triggered:
+                    self.audio_mixer.start_handler(handler)
+                else:
+                    self.audio_mixer.stop_handler(handler.id)
+                
+                # Update widget visual
+                if i < len(self.handler_widgets):
+                    self.handler_widgets[i].set_triggered(is_triggered)
         
-        self._draw_bar()
+        # Only redraw if value changed significantly
+        if value_changed:
+            self._draw_bar()
     
     def _draw_bar(self):
         """Draw the axis value bar with handler zones."""
@@ -728,12 +736,73 @@ class PedalAssistantApp(ctk.CTk):
         
         self.axis_widgets: List[AxisWidget] = []
         self.running = True
+        self._last_triggered_count = -1  # For optimization
+        
+        # System tray (always visible)
+        self.tray_icon: Optional[pystray.Icon] = None
+        self._create_tray_icon()
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
         
         self._create_ui()
         self._refresh_devices()
         self._update_loop()
         
+        # Handle window close and minimize
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Unmap>", self._on_minimize)
+    
+    def _create_tray_icon(self):
+        """Create system tray icon."""
+        # Create icon image
+        icon_size = 64
+        image = Image.new('RGBA', (icon_size, icon_size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        
+        # Draw a gamepad-like icon
+        draw.ellipse([4, 4, icon_size-4, icon_size-4], fill='#4ECDC4')
+        draw.ellipse([12, 12, icon_size-12, icon_size-12], fill='#1a1a1a')
+        draw.ellipse([24, 24, icon_size-24, icon_size-24], fill='#4ECDC4')
+        
+        # Create tray menu
+        menu = pystray.Menu(
+            pystray.MenuItem("Показать/Скрыть", self._show_from_tray, default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Выход", self._quit_from_tray)
+        )
+        
+        self.tray_icon = pystray.Icon(
+            "PedalAssistant",
+            image,
+            "PedalAssistant",
+            menu
+        )
+    
+    def _on_minimize(self, event=None):
+        """Handle window minimize - hide to tray."""
+        if self.state() == 'iconic':  # Window is being minimized
+            self.withdraw()  # Hide window
+    
+    def _show_from_tray(self, icon=None, item=None):
+        """Show/toggle window from tray."""
+        self.after(0, self._toggle_window)
+    
+    def _toggle_window(self):
+        """Toggle window visibility."""
+        if self.winfo_viewable():
+            self.withdraw()
+        else:
+            self._restore_window()
+    
+    def _restore_window(self):
+        """Restore the window."""
+        self.deiconify()  # Show window
+        self.state('normal')
+        self.lift()  # Bring to front
+        self.focus_force()
+    
+    def _quit_from_tray(self, icon=None, item=None):
+        """Quit application from tray."""
+        self.after(0, self._on_close)
     
     def _create_ui(self):
         # Main container
@@ -937,20 +1006,24 @@ class PedalAssistantApp(ctk.CTk):
                     widget.update_value(axis_values[i])
                     total_triggered += widget.get_triggered_count()
         
-        # Update status
-        if total_triggered > 0:
-            self.status_indicator.configure(text_color="#FF6B6B")
-            self.status_label.configure(text="Сработало обработчиков:")
-            self.triggered_label.configure(text=str(total_triggered))
-        else:
-            self.status_indicator.configure(text_color="#4ECDC4")
-            self.status_label.configure(text="Готово")
-            self.triggered_label.configure(text="")
+        # Update status only if changed
+        if total_triggered != self._last_triggered_count:
+            self._last_triggered_count = total_triggered
+            if total_triggered > 0:
+                self.status_indicator.configure(text_color="#FF6B6B")
+                self.status_label.configure(text="Сработало обработчиков:")
+                self.triggered_label.configure(text=str(total_triggered))
+            else:
+                self.status_indicator.configure(text_color="#4ECDC4")
+                self.status_label.configure(text="Готово")
+                self.triggered_label.configure(text="")
         
-        self.after(33, self._update_loop)
+        self.after(33, self._update_loop)  # 30 FPS
     
     def _on_close(self):
         self.running = False
+        if self.tray_icon and self.tray_icon.visible:
+            self.tray_icon.stop()
         for widget in self.axis_widgets:
             widget.cleanup()
         self.audio_mixer.cleanup()
