@@ -18,6 +18,10 @@ from typing import Dict, Optional, List, Callable
 from dataclasses import dataclass, field, asdict
 import pystray
 from PIL import Image, ImageDraw
+import comtypes
+from comtypes import CLSCTX_ALL, GUID
+from ctypes import POINTER, cast, HRESULT, c_void_p, c_wchar_p
+from ctypes.wintypes import DWORD, LPCWSTR
 
 # Autostart registry key
 AUTOSTART_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -29,6 +33,85 @@ SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settin
 # Configure appearance
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+
+# Windows Core Audio API interfaces for device change notifications
+class PROPERTYKEY(comtypes.Structure):
+    _fields_ = [("fmtid", GUID), ("pid", DWORD)]
+
+
+class IMMNotificationClient(comtypes.IUnknown):
+    _iid_ = GUID("{7991EEC9-7E89-4D85-8390-6C703CEC60C0}")
+    _methods_ = [
+        comtypes.COMMETHOD([], HRESULT, "OnDeviceStateChanged",
+                          (["in"], LPCWSTR, "pwstrDeviceId"),
+                          (["in"], DWORD, "dwNewState")),
+        comtypes.COMMETHOD([], HRESULT, "OnDeviceAdded",
+                          (["in"], LPCWSTR, "pwstrDeviceId")),
+        comtypes.COMMETHOD([], HRESULT, "OnDeviceRemoved",
+                          (["in"], LPCWSTR, "pwstrDeviceId")),
+        comtypes.COMMETHOD([], HRESULT, "OnDefaultDeviceChanged",
+                          (["in"], DWORD, "flow"),
+                          (["in"], DWORD, "role"),
+                          (["in"], LPCWSTR, "pwstrDefaultDeviceId")),
+        comtypes.COMMETHOD([], HRESULT, "OnPropertyValueChanged",
+                          (["in"], LPCWSTR, "pwstrDeviceId"),
+                          (["in"], PROPERTYKEY, "key")),
+    ]
+
+
+class IMMDeviceEnumerator(comtypes.IUnknown):
+    _iid_ = GUID("{A95664D2-9614-4F35-A746-DE8DB63617E6}")
+    _methods_ = [
+        comtypes.COMMETHOD([], HRESULT, "EnumAudioEndpoints",
+                          (["in"], DWORD, "dataFlow"),
+                          (["in"], DWORD, "dwStateMask"),
+                          (["out"], POINTER(c_void_p), "ppDevices")),
+        comtypes.COMMETHOD([], HRESULT, "GetDefaultAudioEndpoint",
+                          (["in"], DWORD, "dataFlow"),
+                          (["in"], DWORD, "role"),
+                          (["out"], POINTER(c_void_p), "ppEndpoint")),
+        comtypes.COMMETHOD([], HRESULT, "GetDevice",
+                          (["in"], LPCWSTR, "pwstrId"),
+                          (["out"], POINTER(c_void_p), "ppDevice")),
+        comtypes.COMMETHOD([], HRESULT, "RegisterEndpointNotificationCallback",
+                          (["in"], POINTER(IMMNotificationClient), "pClient")),
+        comtypes.COMMETHOD([], HRESULT, "UnregisterEndpointNotificationCallback",
+                          (["in"], POINTER(IMMNotificationClient), "pClient")),
+    ]
+
+
+class MMDeviceEnumerator(comtypes.CoClass):
+    _reg_clsid_ = GUID("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
+    _com_interfaces_ = [IMMDeviceEnumerator]
+
+
+class AudioDeviceNotificationClient(comtypes.COMObject):
+    """COM object that receives audio device change notifications."""
+    _com_interfaces_ = [IMMNotificationClient]
+    
+    def __init__(self, on_device_changed: Callable):
+        super().__init__()
+        self._on_device_changed = on_device_changed
+    
+    def OnDeviceStateChanged(self, pwstrDeviceId, dwNewState):
+        return 0
+    
+    def OnDeviceAdded(self, pwstrDeviceId):
+        return 0
+    
+    def OnDeviceRemoved(self, pwstrDeviceId):
+        return 0
+    
+    def OnDefaultDeviceChanged(self, flow, role, pwstrDefaultDeviceId):
+        # flow: 0 = eRender (output), 1 = eCapture (input)
+        # role: 0 = eConsole, 1 = eMultimedia, 2 = eCommunications
+        if flow == 0 and role == 0:  # Default output device for console apps
+            self._on_device_changed()
+        return 0
+    
+    def OnPropertyValueChanged(self, pwstrDeviceId, key):
+        return 0
 
 
 @dataclass
@@ -50,22 +133,52 @@ class AlertHandler:
 class AudioMixer:
     """Mixes and plays multiple tones simultaneously."""
     
-    DEVICE_CHECK_INTERVAL = 1.0
-    
     def __init__(self):
         self.sample_rate = 44100
         self._stream: Optional[sd.OutputStream] = None
         self._lock = threading.Lock()
         self._phases: Dict[str, float] = {}  # handler_id -> phase
         self._active_handlers: Dict[str, AlertHandler] = {}  # handler_id -> handler
-        self._current_device = None
-        self._last_device_check = 0.0
+        self._current_device_name: Optional[str] = None
+        self._device_change_pending = False
+        
+        # Setup Windows audio device change notification
+        self._notification_client: Optional[AudioDeviceNotificationClient] = None
+        self._device_enumerator = None
+        self._setup_device_notifications()
         
         self._open_stream()
     
-    def _get_default_device(self) -> Optional[int]:
+    def _setup_device_notifications(self):
+        """Setup COM notifications for audio device changes."""
         try:
-            return sd.default.device[1]
+            comtypes.CoInitialize()
+            self._device_enumerator = comtypes.CoCreateInstance(
+                MMDeviceEnumerator._reg_clsid_,
+                IMMDeviceEnumerator,
+                CLSCTX_ALL
+            )
+            self._notification_client = AudioDeviceNotificationClient(
+                self._on_device_changed_callback
+            )
+            self._device_enumerator.RegisterEndpointNotificationCallback(
+                self._notification_client
+            )
+        except Exception as e:
+            print(f"Failed to setup audio device notifications: {e}")
+    
+    def _on_device_changed_callback(self):
+        """Called by COM when default audio device changes."""
+        self._device_change_pending = True
+    
+    def _get_default_device_name(self) -> Optional[str]:
+        """Get name of default output device."""
+        try:
+            device_idx = sd.default.device[1]
+            if device_idx is not None:
+                device_info = sd.query_devices(device_idx)
+                return device_info.get('name')
+            return None
         except Exception:
             return None
     
@@ -114,18 +227,18 @@ class AudioMixer:
             outdata.fill(0)
     
     def _close_stream(self):
-        if self._stream is not None:
+        stream = self._stream
+        self._stream = None
+        if stream is not None:
             try:
-                self._stream.stop()
-                self._stream.close()
+                stream.stop()
+                stream.close()
             except Exception:
                 pass
-            self._stream = None
     
     def _open_stream(self):
-        self._close_stream()
         try:
-            self._current_device = self._get_default_device()
+            self._current_device_name = self._get_default_device_name()
             self._stream = sd.OutputStream(
                 samplerate=self.sample_rate,
                 channels=1,
@@ -142,16 +255,30 @@ class AudioMixer:
             return False
     
     def check_device_change(self):
-        current_time = time.time()
-        if current_time - self._last_device_check < self.DEVICE_CHECK_INTERVAL:
+        """Check if device change notification was received and handle it."""
+        if not self._device_change_pending:
             return
         
-        self._last_device_check = current_time
-        new_device = self._get_default_device()
+        self._device_change_pending = False
+        print("Audio device change detected, switching...")
         
-        if new_device != self._current_device:
-            with self._lock:
-                self._open_stream()
+        # Close stream
+        self._close_stream()
+        time.sleep(0.1)
+        
+        # Reinitialize sounddevice to get fresh device info
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception:
+            pass
+        
+        # Get new device name and reopen stream
+        new_device_name = self._get_default_device_name()
+        print(f"Audio device changed: {self._current_device_name} -> {new_device_name}")
+        
+        with self._lock:
+            self._open_stream()
     
     def start_handler(self, handler: AlertHandler):
         """Start playing a handler's tone."""
@@ -172,10 +299,40 @@ class AudioMixer:
             if handler.id in self._active_handlers:
                 self._active_handlers[handler.id] = handler
     
+    def reinitialize(self):
+        """Force reinitialize audio stream to current default device."""
+        # Close stream outside of lock to let callback finish
+        self._close_stream()
+        
+        # Wait for stream to fully close
+        time.sleep(0.1)
+        
+        # Force sounddevice to re-query audio devices
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception:
+            pass
+        
+        # Open new stream
+        with self._lock:
+            self._current_device_name = None
+            self._phases.clear()
+            self._open_stream()
+    
     def cleanup(self):
         with self._lock:
             self._active_handlers.clear()
         self._close_stream()
+        
+        # Unregister device change notifications
+        try:
+            if self._device_enumerator and self._notification_client:
+                self._device_enumerator.UnregisterEndpointNotificationCallback(
+                    self._notification_client
+                )
+        except Exception:
+            pass
 
 
 class JoystickReader:
@@ -271,6 +428,67 @@ class JoystickReader:
         with self._lock:
             self._stop_thread()
         pygame.quit()
+
+
+class CTkToolTip:
+    """Simple tooltip for customtkinter widgets."""
+    
+    def __init__(self, widget, text: str, delay: int = 400):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.tooltip_window = None
+        self._after_id = None
+        
+        self.widget.bind("<Enter>", self._on_enter, add="+")
+        self.widget.bind("<Leave>", self._on_leave, add="+")
+        self.widget.bind("<ButtonPress>", self._on_leave, add="+")
+    
+    def _on_enter(self, event=None):
+        self._cancel_scheduled()
+        self._after_id = self.widget.after(self.delay, self._show_tooltip)
+    
+    def _on_leave(self, event=None):
+        self._cancel_scheduled()
+        self._hide_tooltip()
+    
+    def _cancel_scheduled(self):
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+    
+    def _show_tooltip(self):
+        if self.tooltip_window:
+            return
+        
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        
+        self.tooltip_window = tw = ctk.CTkToplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_attributes("-topmost", True)
+        
+        # Tooltip label
+        label = ctk.CTkLabel(
+            tw,
+            text=self.text,
+            font=ctk.CTkFont(size=12),
+            fg_color="#333333",
+            corner_radius=6,
+            text_color="#FFFFFF",
+            padx=10,
+            pady=5
+        )
+        label.pack()
+        
+        tw.update_idletasks()
+        tw_width = tw.winfo_width()
+        tw.wm_geometry(f"+{x - tw_width // 2}+{y}")
+    
+    def _hide_tooltip(self):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
 
 
 class RangeSlider(ctk.CTkFrame):
@@ -471,6 +689,7 @@ class HandlerWidget(ctk.CTkFrame):
             font=ctk.CTkFont(size=14)
         )
         self.delete_btn.pack(side="right")
+        CTkToolTip(self.delete_btn, "Удалить обработчик")
         
         # Controls container
         self.controls_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -997,12 +1216,13 @@ class PedalAssistantApp(ctk.CTk):
             text="🔄",
             width=40,
             height=38,
-            command=self._refresh_devices,
+            command=lambda: self._refresh_devices(apply_saved_settings=True),
             font=ctk.CTkFont(size=18),
             fg_color="#555555",
             hover_color="#666666"
         )
         self.refresh_btn.pack(side="right", padx=(10, 0))
+        CTkToolTip(self.refresh_btn, "Переинициализация (устройства + звук)")
         
         self.save_btn = ctk.CTkButton(
             self.device_select_frame,
@@ -1014,6 +1234,7 @@ class PedalAssistantApp(ctk.CTk):
             fg_color="#555555",
             hover_color="#666666"
         )
+        CTkToolTip(self.save_btn, "Сохранить настройки")
         
         # Autostart checkbox
         self.autostart_var = ctk.BooleanVar(value=self._get_autostart())
@@ -1055,6 +1276,9 @@ class PedalAssistantApp(ctk.CTk):
         self.no_device_label.pack(pady=50)
     
     def _refresh_devices(self, apply_saved_settings: bool = False):
+        # Reinitialize audio to switch to current default device
+        self.audio_mixer.reinitialize()
+        
         devices = self.joystick_reader.get_devices()
         settings = self._load_settings() if apply_saved_settings else None
         
