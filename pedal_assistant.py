@@ -51,6 +51,7 @@ TRANSLATIONS = {
         "save_settings": "Save settings",
         "load_settings": "Load settings",
         "autostart": "Autostart",
+        "autostart_tooltip": "Start minimized when system boots",
         "range": "Range:",
         "frequency": "Freq:",
         "volume": "Vol:",
@@ -58,6 +59,7 @@ TRANSLATIONS = {
         "show_hide": "Show/Hide",
         "exit": "Exit",
         "axis": "Axis",
+        "about": "© 2025 Ilya Marchenko (newilia)\ngithub.com/newilia/PedalAssistant",
     },
     "ru": {
         "app_title": "PedalAssistant - Монитор осей игровых устройств",
@@ -74,6 +76,7 @@ TRANSLATIONS = {
         "save_settings": "Сохранить настройки",
         "load_settings": "Загрузить настройки",
         "autostart": "Автозапуск",
+        "autostart_tooltip": "Запускать свёрнутым при старте системы",
         "range": "Диапазон:",
         "frequency": "Частота:",
         "volume": "Громк:",
@@ -81,6 +84,7 @@ TRANSLATIONS = {
         "show_hide": "Показать/Скрыть",
         "exit": "Выход",
         "axis": "Ось",
+        "about": "© 2025 Ilya Marchenko (newilia)\ngithub.com/newilia/PedalAssistant",
     }
 }
 
@@ -658,7 +662,7 @@ class CTkToolTip:
         label = ctk.CTkLabel(
             tw,
             text=self.text,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=14),
             fg_color="#333333",
             corner_radius=6,
             text_color="#FFFFFF",
@@ -831,9 +835,16 @@ class RangeSlider(ctk.CTkFrame):
 class HandlerWidget(ctk.CTkFrame):
     """Widget for configuring a single alert handler."""
     
+    # Custom order: red, green, blue, yellow, cyan, purple/pink (more saturated & darker)
     ZONE_COLORS = [
-        "#FF6B6B", "#4ECDC4", "#FFE66D", "#95E1D3",
-        "#F38181", "#AA96DA", "#FCBAD3", "#A8D8EA"
+        "#D96B6B",  # red
+        "#6BD98B",  # green
+        "#6B9FD9",  # blue
+        "#D9C86B",  # yellow
+        "#6BC8D9",  # cyan
+        "#C86BD9",  # purple/pink
+        "#D99A6B",  # orange (extra)
+        "#9A6BD9",  # violet (extra)
     ]
     
     def __init__(self, parent, handler: AlertHandler, color_index: int,
@@ -847,6 +858,16 @@ class HandlerWidget(ctk.CTkFrame):
         
         self.configure(fg_color="#252525", corner_radius=8)
         self._create_widgets()
+    
+    def _darken_color(self, hex_color: str, factor: float) -> str:
+        """Darken a hex color by a factor (0.0 = black, 1.0 = original)."""
+        r = int(hex_color[1:3], 16)
+        g = int(hex_color[3:5], 16)
+        b = int(hex_color[5:7], 16)
+        r = int(r * factor)
+        g = int(g * factor)
+        b = int(b * factor)
+        return f"#{r:02x}{g:02x}{b:02x}"
     
     def _create_widgets(self):
         # Header row with color indicator and delete button
@@ -870,9 +891,9 @@ class HandlerWidget(ctk.CTkFrame):
             height=28,
             fg_color="transparent",
             hover_color="#FF4444",
-            text_color="#888888",
+            text_color="#CCCCCC",
             command=lambda: self.on_delete(self.handler.id),
-            font=ctk.CTkFont(size=14)
+            font=ctk.CTkFont(size=15)
         )
         self.delete_btn.pack(side="right")
         CTkToolTip(self.delete_btn, tr("delete_handler"))
@@ -885,10 +906,10 @@ class HandlerWidget(ctk.CTkFrame):
         row1 = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
         row1.pack(fill="x", pady=2)
         
-        ctk.CTkLabel(row1, text=tr("range"), font=ctk.CTkFont(size=13),
-                    text_color="#888888", width=65).pack(side="left")
+        ctk.CTkLabel(row1, text=tr("range"), font=ctk.CTkFont(size=15),
+                    text_color="#CCCCCC", width=70, anchor="w").pack(side="left")
         
-        self.min_entry = ctk.CTkEntry(row1, width=45, height=26, font=ctk.CTkFont(size=13),
+        self.min_entry = ctk.CTkEntry(row1, width=50, height=28, font=ctk.CTkFont(size=15),
                                       justify="center", fg_color="#333333", border_width=1)
         self.min_entry.insert(0, f"{int(self.handler.min_threshold*100)}")
         self.min_entry.pack(side="left", padx=(2, 0))
@@ -904,30 +925,31 @@ class HandlerWidget(ctk.CTkFrame):
         )
         self.range_slider.pack(side="left", fill="x", expand=True, padx=(4, 4))
         
-        self.max_entry = ctk.CTkEntry(row1, width=45, height=26, font=ctk.CTkFont(size=13),
+        self.max_entry = ctk.CTkEntry(row1, width=50, height=28, font=ctk.CTkFont(size=15),
                                       justify="center", fg_color="#333333", border_width=1)
         self.max_entry.insert(0, f"{int(self.handler.max_threshold*100)}")
         self.max_entry.pack(side="left", padx=(0, 2))
         self.max_entry.bind("<Return>", self._on_max_entry)
         self.max_entry.bind("<FocusOut>", self._on_max_entry)
         
-        # Row 2: Sound settings
+        # Row 2: Sound settings (freq, vol, waveform)
         row2 = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
         row2.pack(fill="x", pady=2)
         
         # Frequency
-        ctk.CTkLabel(row2, text=tr("frequency"), font=ctk.CTkFont(size=13),
-                    text_color="#888888", width=55).pack(side="left")
+        ctk.CTkLabel(row2, text=tr("frequency"), font=ctk.CTkFont(size=15),
+                    text_color="#CCCCCC", width=70, anchor="w").pack(side="left")
         
         self.freq_slider = ctk.CTkSlider(
             row2, from_=100, to=2000, number_of_steps=190,
             command=self._on_freq_slider_change,
-            progress_color=self.color, button_color=self.color, width=140
+            progress_color=self.color, button_color=self.color,
+            width=70
         )
         self.freq_slider.set(self.handler.frequency)
-        self.freq_slider.pack(side="left", padx=(2, 0))
+        self.freq_slider.pack(side="left", fill="x", expand=True, padx=(2, 0))
         
-        self.freq_entry = ctk.CTkEntry(row2, width=55, height=26, font=ctk.CTkFont(size=13),
+        self.freq_entry = ctk.CTkEntry(row2, width=55, height=28, font=ctk.CTkFont(size=15),
                                        justify="center", fg_color="#333333", border_width=1)
         self.freq_entry.insert(0, f"{self.handler.frequency}")
         self.freq_entry.pack(side="left", padx=(4, 0))
@@ -935,40 +957,40 @@ class HandlerWidget(ctk.CTkFrame):
         self.freq_entry.bind("<FocusOut>", self._on_freq_entry)
         
         # Volume
-        ctk.CTkLabel(row2, text=tr("volume"), font=ctk.CTkFont(size=13),
-                    text_color="#888888", width=48).pack(side="left", padx=(12, 0))
+        ctk.CTkLabel(row2, text=tr("volume"), font=ctk.CTkFont(size=15),
+                    text_color="#CCCCCC").pack(side="left", padx=(8, 0))
         
         self.vol_slider = ctk.CTkSlider(
             row2, from_=0, to=1, number_of_steps=100,
             command=self._on_vol_slider_change,
-            progress_color=self.color, button_color=self.color, width=140
+            progress_color=self.color, button_color=self.color,
+            width=70
         )
         self.vol_slider.set(self.handler.volume)
-        self.vol_slider.pack(side="left", padx=(2, 0))
+        self.vol_slider.pack(side="left", fill="x", expand=True, padx=(2, 0))
         
-        self.vol_entry = ctk.CTkEntry(row2, width=50, height=26, font=ctk.CTkFont(size=13),
+        self.vol_entry = ctk.CTkEntry(row2, width=50, height=28, font=ctk.CTkFont(size=15),
                                       justify="center", fg_color="#333333", border_width=1)
         self.vol_entry.insert(0, f"{int(self.handler.volume*100)}")
         self.vol_entry.pack(side="left", padx=(4, 0))
         self.vol_entry.bind("<Return>", self._on_vol_entry)
         self.vol_entry.bind("<FocusOut>", self._on_vol_entry)
         
-        # Row 3: Waveform
-        row3 = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
-        row3.pack(fill="x", pady=(2, 0))
+        # Waveform (same row)
+        ctk.CTkLabel(row2, text=tr("waveform"), font=ctk.CTkFont(size=15),
+                    text_color="#CCCCCC").pack(side="left", padx=(8, 0))
         
-        ctk.CTkLabel(row3, text=tr("waveform"), font=ctk.CTkFont(size=13),
-                    text_color="#888888", width=48).pack(side="left")
-        
+        # Create darker version of color for waveform selector
+        dark_color = self._darken_color(self.color, 0.6)
         self.waveform_menu = ctk.CTkSegmentedButton(
-            row3,
-            values=["sine", "sawtooth", "square"],
+            row2,
+            values=["sine", "saw", "square"],
             command=self._on_waveform_change,
-            font=ctk.CTkFont(size=12),
-            selected_color=self.color,
-            selected_hover_color=self.color
+            font=ctk.CTkFont(size=15),
+            selected_color=dark_color,
+            selected_hover_color=dark_color
         )
-        self.waveform_menu.set(self.handler.waveform)
+        self.waveform_menu.set(self._waveform_to_short(self.handler.waveform))
         self.waveform_menu.pack(side="left", padx=(2, 0))
     
     def _update_entry(self, entry, value: str):
@@ -1042,8 +1064,16 @@ class HandlerWidget(ctk.CTkFrame):
         except ValueError:
             self._update_entry(self.vol_entry, f"{int(self.handler.volume*100)}")
     
+    def _waveform_to_short(self, waveform: str) -> str:
+        """Convert full waveform name to short."""
+        return {"sine": "sine", "sawtooth": "saw", "square": "square"}.get(waveform, waveform)
+    
+    def _waveform_from_short(self, short: str) -> str:
+        """Convert short waveform name to full."""
+        return {"sine": "sine", "saw": "sawtooth", "square": "square"}.get(short, short)
+    
     def _on_waveform_change(self, value):
-        self.handler.waveform = value
+        self.handler.waveform = self._waveform_from_short(value)
         self.on_update()
     
     def set_triggered(self, triggered: bool):
@@ -1059,11 +1089,16 @@ class HandlerWidget(ctk.CTkFrame):
 class AxisWidget(ctk.CTkFrame):
     """Widget for displaying an axis with multiple handlers."""
     
+    # Custom order: red, green, blue, yellow, cyan, purple/pink (more saturated & darker)
     AXIS_COLORS = [
-        ("#FF6B6B", "#2D1F1F"), ("#4ECDC4", "#1F2D2C"),
-        ("#FFE66D", "#2D2B1F"), ("#95E1D3", "#1F2D29"),
-        ("#F38181", "#2D1F1F"), ("#AA96DA", "#231F2D"),
-        ("#FCBAD3", "#2D1F26"), ("#A8D8EA", "#1F262D"),
+        ("#D96B6B", "#2D1C1C"),  # red
+        ("#6BD98B", "#1C2D1F"),  # green
+        ("#6B9FD9", "#1C222D"),  # blue
+        ("#D9C86B", "#2D2A1C"),  # yellow
+        ("#6BC8D9", "#1C282D"),  # cyan
+        ("#C86BD9", "#281C2D"),  # purple/pink
+        ("#D99A6B", "#2D221C"),  # orange (extra)
+        ("#9A6BD9", "#221C2D"),  # violet (extra)
     ]
     
     def __init__(self, parent, axis_index: int, axis_name: str,
@@ -1084,45 +1119,51 @@ class AxisWidget(ctk.CTkFrame):
         self._create_widgets()
     
     def _create_widgets(self):
+        # Header row: label + progress bar + add button
+        self.header_row = ctk.CTkFrame(self, fg_color="transparent")
+        self.header_row.pack(fill="x", pady=(2, 0))
+        
         # Axis label
         self.label = ctk.CTkLabel(
-            self,
+            self.header_row,
             text=f"{tr('axis')} {self.axis_index}: {self.axis_name}",
             font=ctk.CTkFont(family="Consolas", size=15, weight="bold"),
-            text_color=self.main_color
+            text_color=self.main_color,
+            width=105
         )
-        self.label.pack(anchor="w", pady=(8, 2))
+        self.label.pack(side="left")
+        
+        # Add handler button
+        self.add_btn = ctk.CTkButton(
+            self.header_row,
+            text="+",
+            command=self._add_handler,
+            font=ctk.CTkFont(size=18, weight="bold"),
+            fg_color="#333333",
+            hover_color="#444444",
+            width=32,
+            height=28
+        )
+        self.add_btn.pack(side="right", padx=(4, 0))
+        CTkToolTip(self.add_btn, tr("add_handler"))
         
         # Progress bar container
-        self.bar_frame = ctk.CTkFrame(self, fg_color=self.bg_color, height=30, corner_radius=6)
-        self.bar_frame.pack(fill="x", pady=2)
+        self.bar_frame = ctk.CTkFrame(self.header_row, fg_color=self.bg_color, height=28, corner_radius=6)
+        self.bar_frame.pack(side="left", fill="x", expand=True, padx=(8, 0))
         self.bar_frame.pack_propagate(False)
         
         # Value bar (canvas for custom drawing)
         self.canvas = ctk.CTkCanvas(
             self.bar_frame,
-            height=26,
+            height=24,
             bg=self.bg_color,
             highlightthickness=0
         )
         self.canvas.pack(fill="x", padx=2, pady=2)
         self.canvas.bind("<Configure>", self._on_resize)
         
-        # Handlers container
+        # Handlers container (initially hidden, shown when handlers are added)
         self.handlers_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.handlers_frame.pack(fill="x", pady=(4, 0))
-        
-        # Add handler button
-        self.add_btn = ctk.CTkButton(
-            self.handlers_frame,
-            text=tr("add_handler"),
-            command=self._add_handler,
-            font=ctk.CTkFont(size=13),
-            fg_color="#333333",
-            hover_color="#444444",
-            height=32
-        )
-        self.add_btn.pack(fill="x", pady=(4, 8))
     
     def _add_handler(self):
         handler = AlertHandler()
@@ -1160,8 +1201,14 @@ class AxisWidget(ctk.CTkFrame):
                 on_delete=self._delete_handler,
                 on_update=self._on_handler_update
             )
-            widget.pack(fill="x", pady=2, before=self.add_btn)
+            widget.pack(fill="x", pady=2)
             self.handler_widgets.append(widget)
+        
+        # Show/hide handlers_frame based on whether there are handlers
+        if self.handlers:
+            self.handlers_frame.pack(fill="x")
+        else:
+            self.handlers_frame.pack_forget()
         
         self._draw_bar()
     
@@ -1273,7 +1320,7 @@ class PedalAssistantApp(ctk.CTk):
         
         self.title(tr("app_title"))
         self.geometry("900x750")
-        self.minsize(850, 650)
+        self.minsize(425, 325)
         
         self.joystick_reader = JoystickReader()
         self.audio_mixer = AudioMixer()
@@ -1361,112 +1408,126 @@ class PedalAssistantApp(ctk.CTk):
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
-        # Header
+        # Header row with title and controls
+        self.header_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.header_frame.pack(fill="x", pady=(0, 15))
+        
+        # Title on the left
+        self.title_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        self.title_frame.pack(side="left")
+        
         self.header = ctk.CTkLabel(
-            self.main_frame,
+            self.title_frame,
             text="🎮 PedalAssistant",
-            font=ctk.CTkFont(family="Segoe UI", size=30, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=26, weight="bold"),
             text_color="#4ECDC4"
         )
-        self.header.pack(pady=(0, 5))
+        self.header.pack(anchor="w")
+        CTkToolTip(self.header, tr("about"))
         
         self.subtitle = ctk.CTkLabel(
-            self.main_frame,
+            self.title_frame,
             text=tr("subtitle"),
             font=ctk.CTkFont(size=15),
-            text_color="#666666"
+            text_color="#CCCCCC"
         )
-        self.subtitle.pack(pady=(0, 20))
+        self.subtitle.pack(anchor="w")
         
-        # Device selection
-        self.device_frame = ctk.CTkFrame(self.main_frame, fg_color="#1a1a1a", corner_radius=12)
-        self.device_frame.pack(fill="x", pady=(0, 15))
+        # Controls on the right
+        self.controls_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        self.controls_frame.pack(side="right")
         
-        self.device_inner = ctk.CTkFrame(self.device_frame, fg_color="transparent")
-        self.device_inner.pack(fill="x", padx=15, pady=15)
-        
-        self.device_label = ctk.CTkLabel(
-            self.device_inner,
-            text=tr("game_device"),
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        self.device_label.pack(anchor="w")
-        
-        self.device_select_frame = ctk.CTkFrame(self.device_inner, fg_color="transparent")
-        self.device_select_frame.pack(fill="x", pady=(5, 0))
-        
-        self.device_dropdown = ctk.CTkComboBox(
-            self.device_select_frame,
-            values=["Нет устройств"],
-            command=self._on_device_select,
+        # Language selector
+        self.lang_selector = ctk.CTkSegmentedButton(
+            self.controls_frame,
+            values=["EN", "RU"],
+            command=self._on_language_change,
             font=ctk.CTkFont(size=15),
-            dropdown_font=ctk.CTkFont(size=15),
-            height=38
+            width=80,
+            selected_color="#2D7A73",
+            selected_hover_color="#256560"
         )
-        self.device_dropdown.pack(side="left", fill="x", expand=True)
+        self.lang_selector.set("EN" if current_language == "en" else "RU")
+        self.lang_selector.pack(side="left", padx=(0, 10))
         
-        self.restart_btn = ctk.CTkButton(
-            self.device_select_frame,
-            text="🔄",
-            width=40,
-            height=38,
-            command=self._restart_app,
-            font=ctk.CTkFont(size=18),
-            fg_color="#555555",
-            hover_color="#666666"
+        # Autostart checkbox
+        self.autostart_var = ctk.BooleanVar(value=self._get_autostart())
+        self.autostart_checkbox = ctk.CTkCheckBox(
+            self.controls_frame,
+            text=tr("autostart"),
+            variable=self.autostart_var,
+            command=self._on_autostart_toggle,
+            font=ctk.CTkFont(size=15),
+            checkbox_width=22,
+            checkbox_height=22
         )
-        self.restart_btn.pack(side="right", padx=(10, 0))
-        CTkToolTip(self.restart_btn, tr("restart_app"))
+        self.autostart_checkbox.pack(side="left", padx=(0, 10))
+        CTkToolTip(self.autostart_checkbox, tr("autostart_tooltip"))
         
-        self.save_btn = ctk.CTkButton(
-            self.device_select_frame,
-            text="💾",
-            width=40,
-            height=38,
-            command=self._save_settings,
-            font=ctk.CTkFont(size=18),
-            fg_color="#555555",
-            hover_color="#666666"
-        )
-        CTkToolTip(self.save_btn, tr("save_settings"))
-        
+        # Buttons
         self.load_btn = ctk.CTkButton(
-            self.device_select_frame,
+            self.controls_frame,
             text="📂",
-            width=40,
+            width=38,
             height=38,
             command=self._load_and_apply_settings,
             font=ctk.CTkFont(size=18),
             fg_color="#555555",
             hover_color="#666666"
         )
+        self.load_btn.pack(side="left", padx=(0, 5))
         CTkToolTip(self.load_btn, tr("load_settings"))
         
-        # Autostart checkbox
-        self.autostart_var = ctk.BooleanVar(value=self._get_autostart())
-        self.autostart_checkbox = ctk.CTkCheckBox(
-            self.device_select_frame,
-            text=tr("autostart"),
-            variable=self.autostart_var,
-            command=self._on_autostart_toggle,
-            font=ctk.CTkFont(size=14),
-            checkbox_width=20,
-            checkbox_height=20
+        self.save_btn = ctk.CTkButton(
+            self.controls_frame,
+            text="💾",
+            width=38,
+            height=38,
+            command=self._save_settings,
+            font=ctk.CTkFont(size=18),
+            fg_color="#555555",
+            hover_color="#666666"
         )
-        self.save_btn.pack(side="right", padx=(10, 0))
-        self.load_btn.pack(side="right", padx=(10, 0))
-        self.autostart_checkbox.pack(side="right", padx=(10, 0))
+        self.save_btn.pack(side="left", padx=(0, 5))
+        CTkToolTip(self.save_btn, tr("save_settings"))
         
-        # Language selector
-        self.lang_selector = ctk.CTkSegmentedButton(
-            self.device_select_frame,
-            values=["EN", "RU"],
-            command=self._on_language_change,
-            font=ctk.CTkFont(size=12),
-            width=80
+        self.restart_btn = ctk.CTkButton(
+            self.controls_frame,
+            text="🔄",
+            width=38,
+            height=38,
+            command=self._restart_app,
+            font=ctk.CTkFont(size=18),
+            fg_color="#555555",
+            hover_color="#666666"
         )
-        self.lang_selector.set("EN" if current_language == "en" else "RU")
-        self.lang_selector.pack(side="right", padx=(10, 0))
+        self.restart_btn.pack(side="left")
+        CTkToolTip(self.restart_btn, tr("restart_app"))
+        
+        # Device selection
+        self.device_frame = ctk.CTkFrame(self.main_frame, fg_color="#1a1a1a", corner_radius=12)
+        self.device_frame.pack(fill="x", pady=(0, 15))
+        
+        self.device_inner = ctk.CTkFrame(self.device_frame, fg_color="transparent")
+        self.device_inner.pack(fill="x", padx=15, pady=12)
+        
+        self.device_label = ctk.CTkLabel(
+            self.device_inner,
+            text=tr("game_device"),
+            font=ctk.CTkFont(size=15, weight="bold")
+        )
+        self.device_label.pack(side="left", padx=(0, 10))
+        
+        self.device_dropdown = ctk.CTkComboBox(
+            self.device_inner,
+            values=["Нет устройств"],
+            command=self._on_device_select,
+            font=ctk.CTkFont(size=15),
+            dropdown_font=ctk.CTkFont(size=15),
+            height=34,
+            state="readonly"
+        )
+        self.device_dropdown.pack(side="left", fill="x", expand=True)
         
         # Axes container (scrollable)
         self.axes_frame = ctk.CTkFrame(self.main_frame, fg_color="#1a1a1a", corner_radius=12)
@@ -1485,6 +1546,20 @@ class PedalAssistantApp(ctk.CTk):
         )
         self.axes_scroll.pack(fill="both", expand=True, padx=15, pady=(0, 15))
         
+        # Make content stretch to full width
+        self.axes_scroll.columnconfigure(0, weight=1)
+        
+        # Bind canvas width to inner frame width
+        def on_canvas_configure(event):
+            canvas_width = event.width
+            self.axes_scroll._parent_canvas.itemconfig(
+                self.axes_scroll._parent_canvas.find_all()[0],
+                width=canvas_width
+            )
+            self._update_scrollbar_visibility()
+        
+        self.axes_scroll._parent_canvas.bind("<Configure>", on_canvas_configure)
+        
         self.no_device_label = ctk.CTkLabel(
             self.axes_scroll,
             text=tr("select_device"),
@@ -1492,6 +1567,25 @@ class PedalAssistantApp(ctk.CTk):
             text_color="#666666"
         )
         self.no_device_label.pack(pady=50)
+    
+    def _update_scrollbar_visibility(self, event=None):
+        """Hide scrollbar when content fits, show when it doesn't."""
+        try:
+            canvas = self.axes_scroll._parent_canvas
+            scrollbar = self.axes_scroll._scrollbar
+            
+            # Get content height and visible height
+            canvas.update_idletasks()
+            content_height = canvas.bbox("all")[3] if canvas.bbox("all") else 0
+            visible_height = canvas.winfo_height()
+            
+            # Show/hide scrollbar based on content
+            if content_height <= visible_height:
+                scrollbar.grid_remove()
+            else:
+                scrollbar.grid()
+        except Exception:
+            pass
     
     def _refresh_devices(self, apply_saved_settings: bool = False):
         # Reinitialize audio to switch to current default device
@@ -1524,14 +1618,19 @@ class PedalAssistantApp(ctk.CTk):
             self._on_device_select(selected_device, settings)
     
     def _on_device_select(self, selection: str, settings: dict = None):
-        if selection.startswith("Нет"):
+        if selection.startswith("Нет") or selection == tr("no_devices"):
             self._clear_axes()
+            return
+        
+        # Skip if same device already selected
+        if hasattr(self, '_current_device_selection') and self._current_device_selection == selection:
             return
         
         try:
             device_idx = int(selection.split(":")[0])
             num_axes = self.joystick_reader.select_device(device_idx)
             if num_axes > 0:
+                self._current_device_selection = selection
                 self._create_axis_widgets(num_axes)
                 # Apply saved settings if provided
                 if settings:
@@ -1548,6 +1647,11 @@ class PedalAssistantApp(ctk.CTk):
             widget.destroy()
         self.axis_widgets.clear()
         self.joystick_reader.clear_device()
+        self._current_device_selection = None
+        
+        # Remove old no_device_label if exists
+        if hasattr(self, 'no_device_label') and self.no_device_label.winfo_exists():
+            self.no_device_label.destroy()
         
         self.no_device_label = ctk.CTkLabel(
             self.axes_scroll,
@@ -1581,7 +1685,7 @@ class PedalAssistantApp(ctk.CTk):
         for i in range(num_axes):
             axis_name = axis_names[i] if i < len(axis_names) else f"Axis {i}"
             widget = AxisWidget(self.axes_scroll, i, axis_name, self.audio_mixer)
-            widget.pack(fill="x", pady=2)
+            widget.grid(row=i, column=0, sticky="ew", pady=2)
             self.axis_widgets.append(widget)
     
     def _on_game_device_change(self):
