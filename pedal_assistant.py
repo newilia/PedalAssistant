@@ -34,6 +34,64 @@ SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settin
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
+# Localization
+TRANSLATIONS = {
+    "en": {
+        "app_title": "PedalAssistant - Game Controller Axis Monitor",
+        "header": "🎮 PedalAssistant",
+        "subtitle": "Axis monitor with customizable audio alerts",
+        "game_device": "Game device:",
+        "no_devices": "No devices connected",
+        "device_axes": "Device axes:",
+        "select_device": "Select a device from the list above",
+        "no_axes": "Device has no axes",
+        "add_handler": "+ Add handler",
+        "delete_handler": "Delete handler",
+        "restart_app": "Restart application",
+        "save_settings": "Save settings",
+        "load_settings": "Load settings",
+        "autostart": "Autostart",
+        "range": "Range:",
+        "frequency": "Freq:",
+        "volume": "Vol:",
+        "waveform": "Wave:",
+        "show_hide": "Show/Hide",
+        "exit": "Exit",
+        "axis": "Axis",
+    },
+    "ru": {
+        "app_title": "PedalAssistant - Монитор осей игровых устройств",
+        "header": "🎮 PedalAssistant",
+        "subtitle": "Монитор осей с настраиваемыми звуковыми оповещениями",
+        "game_device": "Игровое устройство:",
+        "no_devices": "Нет подключенных устройств",
+        "device_axes": "Оси устройства:",
+        "select_device": "Выберите устройство из списка выше",
+        "no_axes": "Устройство не имеет осей",
+        "add_handler": "+ Добавить обработчик",
+        "delete_handler": "Удалить обработчик",
+        "restart_app": "Перезапустить программу",
+        "save_settings": "Сохранить настройки",
+        "load_settings": "Загрузить настройки",
+        "autostart": "Автозапуск",
+        "range": "Диапазон:",
+        "frequency": "Частота:",
+        "volume": "Громк:",
+        "waveform": "Форма:",
+        "show_hide": "Показать/Скрыть",
+        "exit": "Выход",
+        "axis": "Ось",
+    }
+}
+
+# Current language (will be loaded from settings)
+current_language = "en"
+
+
+def tr(key: str) -> str:
+    """Get translated string for current language."""
+    return TRANSLATIONS.get(current_language, TRANSLATIONS["en"]).get(key, key)
+
 
 # Windows Core Audio API interfaces for device change notifications
 class PROPERTYKEY(comtypes.Structure):
@@ -817,7 +875,7 @@ class HandlerWidget(ctk.CTkFrame):
             font=ctk.CTkFont(size=14)
         )
         self.delete_btn.pack(side="right")
-        CTkToolTip(self.delete_btn, "Удалить обработчик")
+        CTkToolTip(self.delete_btn, tr("delete_handler"))
         
         # Controls container
         self.controls_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -827,7 +885,7 @@ class HandlerWidget(ctk.CTkFrame):
         row1 = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
         row1.pack(fill="x", pady=2)
         
-        ctk.CTkLabel(row1, text="Диапазон:", font=ctk.CTkFont(size=13),
+        ctk.CTkLabel(row1, text=tr("range"), font=ctk.CTkFont(size=13),
                     text_color="#888888", width=65).pack(side="left")
         
         self.min_entry = ctk.CTkEntry(row1, width=45, height=26, font=ctk.CTkFont(size=13),
@@ -858,7 +916,7 @@ class HandlerWidget(ctk.CTkFrame):
         row2.pack(fill="x", pady=2)
         
         # Frequency
-        ctk.CTkLabel(row2, text="Частота:", font=ctk.CTkFont(size=13),
+        ctk.CTkLabel(row2, text=tr("frequency"), font=ctk.CTkFont(size=13),
                     text_color="#888888", width=55).pack(side="left")
         
         self.freq_slider = ctk.CTkSlider(
@@ -877,7 +935,7 @@ class HandlerWidget(ctk.CTkFrame):
         self.freq_entry.bind("<FocusOut>", self._on_freq_entry)
         
         # Volume
-        ctk.CTkLabel(row2, text="Громк:", font=ctk.CTkFont(size=13),
+        ctk.CTkLabel(row2, text=tr("volume"), font=ctk.CTkFont(size=13),
                     text_color="#888888", width=48).pack(side="left", padx=(12, 0))
         
         self.vol_slider = ctk.CTkSlider(
@@ -899,7 +957,7 @@ class HandlerWidget(ctk.CTkFrame):
         row3 = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
         row3.pack(fill="x", pady=(2, 0))
         
-        ctk.CTkLabel(row3, text="Форма:", font=ctk.CTkFont(size=13),
+        ctk.CTkLabel(row3, text=tr("waveform"), font=ctk.CTkFont(size=13),
                     text_color="#888888", width=48).pack(side="left")
         
         self.waveform_menu = ctk.CTkSegmentedButton(
@@ -1029,7 +1087,7 @@ class AxisWidget(ctk.CTkFrame):
         # Axis label
         self.label = ctk.CTkLabel(
             self,
-            text=f"Ось {self.axis_index}: {self.axis_name}",
+            text=f"{tr('axis')} {self.axis_index}: {self.axis_name}",
             font=ctk.CTkFont(family="Consolas", size=15, weight="bold"),
             text_color=self.main_color
         )
@@ -1057,7 +1115,7 @@ class AxisWidget(ctk.CTkFrame):
         # Add handler button
         self.add_btn = ctk.CTkButton(
             self.handlers_frame,
-            text="+ Добавить обработчик",
+            text=tr("add_handler"),
             command=self._add_handler,
             font=ctk.CTkFont(size=13),
             fg_color="#333333",
@@ -1208,9 +1266,12 @@ class PedalAssistantApp(ctk.CTk):
     """Main application window."""
     
     def __init__(self, start_minimized: bool = False):
+        # Load language setting before UI creation
+        self._load_language_setting()
+        
         super().__init__()
         
-        self.title("PedalAssistant - Монитор осей игровых устройств")
+        self.title(tr("app_title"))
         self.geometry("900x750")
         self.minsize(850, 650)
         
@@ -1256,9 +1317,9 @@ class PedalAssistantApp(ctk.CTk):
         
         # Create tray menu
         menu = pystray.Menu(
-            pystray.MenuItem("Показать/Скрыть", self._show_from_tray, default=True),
+            pystray.MenuItem(tr("show_hide"), self._show_from_tray, default=True),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Выход", self._quit_from_tray)
+            pystray.MenuItem(tr("exit"), self._quit_from_tray)
         )
         
         self.tray_icon = pystray.Icon(
@@ -1311,7 +1372,7 @@ class PedalAssistantApp(ctk.CTk):
         
         self.subtitle = ctk.CTkLabel(
             self.main_frame,
-            text="Монитор осей с настраиваемыми звуковыми оповещениями",
+            text=tr("subtitle"),
             font=ctk.CTkFont(size=15),
             text_color="#666666"
         )
@@ -1326,7 +1387,7 @@ class PedalAssistantApp(ctk.CTk):
         
         self.device_label = ctk.CTkLabel(
             self.device_inner,
-            text="Игровое устройство:",
+            text=tr("game_device"),
             font=ctk.CTkFont(size=16, weight="bold")
         )
         self.device_label.pack(anchor="w")
@@ -1355,7 +1416,7 @@ class PedalAssistantApp(ctk.CTk):
             hover_color="#666666"
         )
         self.restart_btn.pack(side="right", padx=(10, 0))
-        CTkToolTip(self.restart_btn, "Перезапустить программу")
+        CTkToolTip(self.restart_btn, tr("restart_app"))
         
         self.save_btn = ctk.CTkButton(
             self.device_select_frame,
@@ -1367,7 +1428,7 @@ class PedalAssistantApp(ctk.CTk):
             fg_color="#555555",
             hover_color="#666666"
         )
-        CTkToolTip(self.save_btn, "Сохранить настройки")
+        CTkToolTip(self.save_btn, tr("save_settings"))
         
         self.load_btn = ctk.CTkButton(
             self.device_select_frame,
@@ -1379,13 +1440,13 @@ class PedalAssistantApp(ctk.CTk):
             fg_color="#555555",
             hover_color="#666666"
         )
-        CTkToolTip(self.load_btn, "Загрузить настройки")
+        CTkToolTip(self.load_btn, tr("load_settings"))
         
         # Autostart checkbox
         self.autostart_var = ctk.BooleanVar(value=self._get_autostart())
         self.autostart_checkbox = ctk.CTkCheckBox(
             self.device_select_frame,
-            text="Автозапуск",
+            text=tr("autostart"),
             variable=self.autostart_var,
             command=self._on_autostart_toggle,
             font=ctk.CTkFont(size=14),
@@ -1396,13 +1457,24 @@ class PedalAssistantApp(ctk.CTk):
         self.load_btn.pack(side="right", padx=(10, 0))
         self.autostart_checkbox.pack(side="right", padx=(10, 0))
         
+        # Language selector
+        self.lang_selector = ctk.CTkSegmentedButton(
+            self.device_select_frame,
+            values=["EN", "RU"],
+            command=self._on_language_change,
+            font=ctk.CTkFont(size=12),
+            width=80
+        )
+        self.lang_selector.set("EN" if current_language == "en" else "RU")
+        self.lang_selector.pack(side="right", padx=(10, 0))
+        
         # Axes container (scrollable)
         self.axes_frame = ctk.CTkFrame(self.main_frame, fg_color="#1a1a1a", corner_radius=12)
         self.axes_frame.pack(fill="both", expand=True)
         
         self.axes_label = ctk.CTkLabel(
             self.axes_frame,
-            text="Оси устройства:",
+            text=tr("device_axes"),
             font=ctk.CTkFont(size=16, weight="bold")
         )
         self.axes_label.pack(anchor="w", padx=15, pady=(15, 5))
@@ -1415,7 +1487,7 @@ class PedalAssistantApp(ctk.CTk):
         
         self.no_device_label = ctk.CTkLabel(
             self.axes_scroll,
-            text="Выберите устройство из списка выше",
+            text=tr("select_device"),
             font=ctk.CTkFont(size=15),
             text_color="#666666"
         )
@@ -1429,8 +1501,8 @@ class PedalAssistantApp(ctk.CTk):
         settings = self._load_settings() if apply_saved_settings else None
         
         if not devices:
-            self.device_dropdown.configure(values=["Нет подключенных устройств"])
-            self.device_dropdown.set("Нет подключенных устройств")
+            self.device_dropdown.configure(values=[tr("no_devices")])
+            self.device_dropdown.set(tr("no_devices"))
             self._clear_axes()
         else:
             self.device_dropdown.configure(values=devices)
@@ -1479,7 +1551,7 @@ class PedalAssistantApp(ctk.CTk):
         
         self.no_device_label = ctk.CTkLabel(
             self.axes_scroll,
-            text="Выберите устройство из списка выше",
+            text=tr("select_device"),
             font=ctk.CTkFont(size=15),
             text_color="#666666"
         )
@@ -1497,7 +1569,7 @@ class PedalAssistantApp(ctk.CTk):
         if num_axes == 0:
             self.no_device_label = ctk.CTkLabel(
                 self.axes_scroll,
-                text="Устройство не имеет осей",
+                text=tr("no_axes"),
                 font=ctk.CTkFont(size=15),
                 text_color="#666666"
             )
@@ -1544,6 +1616,7 @@ class PedalAssistantApp(ctk.CTk):
         device_name = device_selection.split(": ", 1)[1] if ": " in device_selection else device_selection
         
         settings = {
+            "language": current_language,
             "device_name": device_name,
             "axes": {}
         }
@@ -1578,6 +1651,18 @@ class PedalAssistantApp(ctk.CTk):
             # Brief visual feedback on load button
             self.load_btn.configure(text="✓")
             self.after(1000, lambda: self.load_btn.configure(text="📂"))
+    
+    def _load_language_setting(self):
+        """Load language setting from file before UI creation."""
+        global current_language
+        if os.path.exists(SETTINGS_FILE):
+            try:
+                with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                    if "language" in settings:
+                        current_language = settings["language"]
+            except Exception:
+                pass
     
     def _load_settings(self):
         """Load settings from file."""
@@ -1659,6 +1744,17 @@ class PedalAssistantApp(ctk.CTk):
     def _on_autostart_toggle(self):
         """Handle autostart checkbox toggle."""
         self._set_autostart(self.autostart_var.get())
+    
+    def _on_language_change(self, value):
+        """Handle language change - save and restart."""
+        global current_language
+        new_lang = "en" if value == "EN" else "ru"
+        if new_lang != current_language:
+            current_language = new_lang
+            # Save current settings with new language
+            self._save_settings()
+            # Restart to apply language change
+            self._restart_app()
     
     def _restart_app(self):
         """Restart the application."""
