@@ -20,8 +20,8 @@ import pystray
 from PIL import Image, ImageDraw
 import comtypes
 from comtypes import CLSCTX_ALL, GUID
-from ctypes import POINTER, cast, HRESULT, c_void_p, c_wchar_p
-from ctypes.wintypes import DWORD, LPCWSTR
+from ctypes import POINTER, cast, HRESULT, c_void_p, c_wchar_p, windll, byref, sizeof, Structure, create_string_buffer, WINFUNCTYPE, c_long, c_int
+from ctypes.wintypes import DWORD, LPCWSTR, HWND, UINT, WPARAM, LPARAM, HANDLE, BOOL, LPVOID, MSG
 
 # Autostart registry key
 AUTOSTART_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -112,6 +112,134 @@ class AudioDeviceNotificationClient(comtypes.COMObject):
     
     def OnPropertyValueChanged(self, pwstrDeviceId, key):
         return 0
+
+
+# Windows constants for device notifications
+WM_DEVICECHANGE = 0x0219
+DBT_DEVICEARRIVAL = 0x8000
+DBT_DEVICEREMOVECOMPLETE = 0x8004
+DBT_DEVTYP_DEVICEINTERFACE = 0x00000005
+DEVICE_NOTIFY_WINDOW_HANDLE = 0x00000000
+
+# HID device class GUID (for game controllers)
+GUID_DEVINTERFACE_HID = GUID("{4D1E55B2-F16F-11CF-88CB-001111000030}")
+
+
+class DEV_BROADCAST_DEVICEINTERFACE(Structure):
+    _fields_ = [
+        ("dbcc_size", DWORD),
+        ("dbcc_devicetype", DWORD),
+        ("dbcc_reserved", DWORD),
+        ("dbcc_classguid", GUID),
+        ("dbcc_name", c_wchar_p * 1),
+    ]
+
+
+class DeviceNotificationMonitor:
+    """Monitors USB HID device connections/disconnections using Windows messages."""
+    
+    def __init__(self, on_device_change: Callable):
+        self._on_device_change = on_device_change
+        self._hwnd = None
+        self._notification_handle = None
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._wndproc = None
+    
+    def start(self):
+        """Start monitoring device changes in a background thread."""
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._message_loop, daemon=True)
+        self._thread.start()
+    
+    def stop(self):
+        """Stop monitoring."""
+        self._running = False
+        if self._hwnd:
+            try:
+                windll.user32.PostMessageW(self._hwnd, 0x0012, 0, 0)  # WM_QUIT
+            except Exception:
+                pass
+    
+    def _message_loop(self):
+        """Create hidden window and run message loop."""
+        try:
+            # Define window class
+            WNDPROC = WINFUNCTYPE(c_long, HWND, UINT, WPARAM, LPARAM)
+            
+            class WNDCLASS(Structure):
+                _fields_ = [
+                    ("style", UINT),
+                    ("lpfnWndProc", WNDPROC),
+                    ("cbClsExtra", c_int),
+                    ("cbWndExtra", c_int),
+                    ("hInstance", HANDLE),
+                    ("hIcon", HANDLE),
+                    ("hCursor", HANDLE),
+                    ("hbrBackground", HANDLE),
+                    ("lpszMenuName", LPCWSTR),
+                    ("lpszClassName", LPCWSTR),
+                ]
+            
+            def wndproc(hwnd, msg, wparam, lparam):
+                if msg == WM_DEVICECHANGE:
+                    if wparam in (DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE):
+                        # Device connected or disconnected
+                        self._on_device_change()
+                return windll.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+            
+            self._wndproc = WNDPROC(wndproc)
+            
+            hInstance = windll.kernel32.GetModuleHandleW(None)
+            className = "PedalAssistantDeviceMonitor"
+            
+            wc = WNDCLASS()
+            wc.lpfnWndProc = self._wndproc
+            wc.hInstance = hInstance
+            wc.lpszClassName = className
+            
+            if not windll.user32.RegisterClassW(byref(wc)):
+                return
+            
+            # Create hidden window
+            self._hwnd = windll.user32.CreateWindowExW(
+                0, className, "DeviceMonitor", 0,
+                0, 0, 0, 0, None, None, hInstance, None
+            )
+            
+            if not self._hwnd:
+                return
+            
+            # Register for HID device notifications
+            dbi = DEV_BROADCAST_DEVICEINTERFACE()
+            dbi.dbcc_size = sizeof(DEV_BROADCAST_DEVICEINTERFACE)
+            dbi.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE
+            dbi.dbcc_classguid = GUID_DEVINTERFACE_HID
+            
+            self._notification_handle = windll.user32.RegisterDeviceNotificationW(
+                self._hwnd,
+                byref(dbi),
+                DEVICE_NOTIFY_WINDOW_HANDLE
+            )
+            
+            # Message loop
+            msg = MSG()
+            while self._running:
+                ret = windll.user32.GetMessageW(byref(msg), None, 0, 0)
+                if ret <= 0:
+                    break
+                windll.user32.TranslateMessage(byref(msg))
+                windll.user32.DispatchMessageW(byref(msg))
+            
+        except Exception as e:
+            print(f"Device monitor error: {e}")
+        finally:
+            if self._notification_handle:
+                windll.user32.UnregisterDeviceNotification(self._notification_handle)
+            if self._hwnd:
+                windll.user32.DestroyWindow(self._hwnd)
 
 
 @dataclass
@@ -1091,6 +1219,11 @@ class PedalAssistantApp(ctk.CTk):
         
         self.axis_widgets: List[AxisWidget] = []
         self.running = True
+        self._device_change_pending = False
+        
+        # Monitor for game controller connections/disconnections
+        self.device_monitor = DeviceNotificationMonitor(self._on_game_device_change)
+        self.device_monitor.start()
         
         # System tray (always visible)
         self.tray_icon: Optional[pystray.Icon] = None
@@ -1373,11 +1506,21 @@ class PedalAssistantApp(ctk.CTk):
             widget.pack(fill="x", pady=2)
             self.axis_widgets.append(widget)
     
+    def _on_game_device_change(self):
+        """Called when a game controller is connected or disconnected."""
+        self._device_change_pending = True
+    
     def _update_loop(self):
         if not self.running:
             return
         
         self.audio_mixer.check_device_change()
+        
+        # Check if game controller was connected/disconnected
+        if self._device_change_pending:
+            self._device_change_pending = False
+            # Delay the refresh slightly to let the device fully initialize
+            self.after(500, lambda: self._refresh_devices(apply_saved_settings=True))
         
         axis_values = self.joystick_reader.get_axis_values()
         
@@ -1511,6 +1654,7 @@ class PedalAssistantApp(ctk.CTk):
         self.running = False
         if self.tray_icon and self.tray_icon.visible:
             self.tray_icon.stop()
+        self.device_monitor.stop()
         for widget in self.axis_widgets:
             widget.cleanup()
         self.audio_mixer.cleanup()
