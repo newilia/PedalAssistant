@@ -1236,6 +1236,18 @@ class PedalAssistantApp(ctk.CTk):
         )
         CTkToolTip(self.save_btn, "Сохранить настройки")
         
+        self.load_btn = ctk.CTkButton(
+            self.device_select_frame,
+            text="📂",
+            width=40,
+            height=38,
+            command=self._load_and_apply_settings,
+            font=ctk.CTkFont(size=18),
+            fg_color="#555555",
+            hover_color="#666666"
+        )
+        CTkToolTip(self.load_btn, "Загрузить настройки")
+        
         # Autostart checkbox
         self.autostart_var = ctk.BooleanVar(value=self._get_autostart())
         self.autostart_checkbox = ctk.CTkCheckBox(
@@ -1248,6 +1260,7 @@ class PedalAssistantApp(ctk.CTk):
             checkbox_height=20
         )
         self.save_btn.pack(side="right", padx=(10, 0))
+        self.load_btn.pack(side="right", padx=(10, 0))
         self.autostart_checkbox.pack(side="right", padx=(10, 0))
         
         # Axes container (scrollable)
@@ -1403,6 +1416,15 @@ class PedalAssistantApp(ctk.CTk):
             self.after(1000, lambda: self.save_btn.configure(text="💾"))
         except Exception as e:
             print(f"Error saving settings: {e}")
+    
+    def _load_and_apply_settings(self):
+        """Load settings from file and apply them."""
+        settings = self._load_settings()
+        if settings:
+            self._apply_settings(settings)
+            # Brief visual feedback on load button
+            self.load_btn.configure(text="✓")
+            self.after(1000, lambda: self.load_btn.configure(text="📂"))
     
     def _load_settings(self):
         """Load settings from file."""
