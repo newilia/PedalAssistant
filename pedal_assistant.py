@@ -1344,18 +1344,18 @@ class PedalAssistantApp(ctk.CTk):
         )
         self.device_dropdown.pack(side="left", fill="x", expand=True)
         
-        self.refresh_btn = ctk.CTkButton(
+        self.restart_btn = ctk.CTkButton(
             self.device_select_frame,
             text="🔄",
             width=40,
             height=38,
-            command=lambda: self._refresh_devices(apply_saved_settings=True),
+            command=self._restart_app,
             font=ctk.CTkFont(size=18),
             fg_color="#555555",
             hover_color="#666666"
         )
-        self.refresh_btn.pack(side="right", padx=(10, 0))
-        CTkToolTip(self.refresh_btn, "Переинициализация (устройства + звук)")
+        self.restart_btn.pack(side="right", padx=(10, 0))
+        CTkToolTip(self.restart_btn, "Перезапустить программу")
         
         self.save_btn = ctk.CTkButton(
             self.device_select_frame,
@@ -1659,6 +1659,20 @@ class PedalAssistantApp(ctk.CTk):
     def _on_autostart_toggle(self):
         """Handle autostart checkbox toggle."""
         self._set_autostart(self.autostart_var.get())
+    
+    def _restart_app(self):
+        """Restart the application."""
+        # Get the current script path
+        script_path = os.path.abspath(__file__)
+        
+        # Prepare arguments
+        args = [sys.executable, script_path]
+        
+        # Close current instance
+        self._on_close()
+        
+        # Start new instance
+        os.execv(sys.executable, args)
     
     def _on_close(self):
         self.running = False
