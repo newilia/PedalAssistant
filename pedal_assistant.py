@@ -1109,6 +1109,7 @@ class AxisWidget(ctk.CTkFrame):
         self.axis_name = axis_name
         self.audio_mixer = audio_mixer
         self.value = 0.0
+        self._last_drawn_value = 0.0  # Track last drawn value separately
         self.handlers: List[AlertHandler] = []
         self.handler_widgets: List[HandlerWidget] = []
         
@@ -1218,7 +1219,6 @@ class AxisWidget(ctk.CTkFrame):
     def update_value(self, value: float):
         """Update axis value and check handlers."""
         new_value = max(0.0, min(1.0, value))
-        value_changed = abs(new_value - self.value) > 0.001
         self.value = new_value
         
         for i, handler in enumerate(self.handlers):
@@ -1238,8 +1238,9 @@ class AxisWidget(ctk.CTkFrame):
                 if i < len(self.handler_widgets):
                     self.handler_widgets[i].set_triggered(is_triggered)
         
-        # Only redraw if value changed significantly
-        if value_changed:
+        # Only redraw if value changed significantly from last drawn state
+        if abs(new_value - self._last_drawn_value) > 0.001:
+            self._last_drawn_value = new_value
             self._draw_bar()
     
     def _draw_bar(self):

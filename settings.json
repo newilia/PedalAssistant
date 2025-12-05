@@ -1,0 +1,20 @@
+{
+  "language": "ru",
+  "device_name": "DualSense Wireless Controller",
+  "axes": {
+    "0": [
+      {
+        "min_threshold": 0.9500831946755408,
+        "max_threshold": 1,
+        "frequency": 440,
+        "volume": 0.5,
+        "waveform": "square"
+      }
+    ],
+    "1": [],
+    "2": [],
+    "3": [],
+    "4": [],
+    "5": []
+  }
+}
