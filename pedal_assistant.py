@@ -1435,12 +1435,18 @@ class PedalAssistantApp(ctk.CTk):
         else:
             self.device_dropdown.configure(values=devices)
             
-            # Try to select saved device
+            # Try to select saved device by name (ignoring index)
             selected_device = devices[0]
-            if settings and "device" in settings:
-                saved_device = settings["device"]
-                if saved_device in devices:
-                    selected_device = saved_device
+            if settings and "device_name" in settings:
+                saved_name = settings["device_name"]
+                # Find device with matching name
+                for device in devices:
+                    # Extract name from "index: name" format
+                    if ": " in device:
+                        current_name = device.split(": ", 1)[1]
+                        if current_name == saved_name:
+                            selected_device = device
+                            break
             
             self.device_dropdown.set(selected_device)
             self._on_device_select(selected_device, settings)
@@ -1533,8 +1539,12 @@ class PedalAssistantApp(ctk.CTk):
     
     def _save_settings(self):
         """Save current settings to file."""
+        # Extract device name without index (e.g., "0: Device Name" -> "Device Name")
+        device_selection = self.device_dropdown.get()
+        device_name = device_selection.split(": ", 1)[1] if ": " in device_selection else device_selection
+        
         settings = {
-            "device": self.device_dropdown.get(),
+            "device_name": device_name,
             "axes": {}
         }
         
